@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/OrbitControls.js';
 import { loadRealCampus, buildFallbackCampus, plantTrees } from './geo.js';
 import { makeBuildingGeometry, makeBuildingMaterial, makeRubbleMaterial, makeEdgeLines, makeEdgeMaterial, paintGround, makeTrees } from './world.js';
 import { tagLandmarks, makeGate, makeHorseStatue, makeRoofSign, makeHalo, makeSculptureGarden, gateRotation, SCHOOL } from './landmarks.js';
+import { quipFor, quipForObject } from './quips.js';
 
 const $ = (id) => document.getElementById(id);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -313,13 +314,102 @@ function whoosh() {
   src.connect(bp); bp.connect(g); g.connect(master); src.start(t0); src.stop(t0 + 0.4);
 }
 
+
+// ───────── 타격감 이펙트: 바닥 그을음·균열 데칼, 불·연기, 폭발 조명, 히트스톱 ─────────
+function makeScorchTexture(cracks = true, hole = true) {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  if (hole) {
+    const gr = g.createRadialGradient(128, 128, 6, 128, 128, 124);
+    gr.addColorStop(0, 'rgba(20,14,10,.96)'); gr.addColorStop(0.35, 'rgba(30,22,16,.85)'); gr.addColorStop(0.7, 'rgba(40,32,24,.45)'); gr.addColorStop(1, 'rgba(40,32,24,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, 256, 256);
+  }
+  if (cracks) {
+    g.strokeStyle = 'rgba(12,10,8,.9)'; g.lineCap = 'round';
+    const n = 7 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < n; i++) {
+      let a = (i / n) * 6.283 + rand(-0.3, 0.3), x = 128, y = 128, w = 4.2;
+      g.beginPath(); g.moveTo(x, y);
+      for (let k = 0; k < 7; k++) {
+        const L = rand(10, 22); a += rand(-0.55, 0.55);
+        x += Math.cos(a) * L; y += Math.sin(a) * L;
+        g.lineWidth = w; w *= 0.78; g.lineTo(x, y);
+        if (Math.random() < 0.35) { const bx = x, by = y, ba = a + rand(-1.2, 1.2); g.moveTo(bx, by); g.lineTo(bx + Math.cos(ba) * rand(6, 14), by + Math.sin(ba) * rand(6, 14)); g.moveTo(x, y); }
+      }
+      g.stroke();
+    }
+  }
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+const SCORCH_TEX = [makeScorchTexture(true, true), makeScorchTexture(true, true), makeScorchTexture(true, false), makeScorchTexture(false, true)];
+class Decals {
+  constructor(n) {
+    this.n = n; this.i = 0; this.items = [];
+    const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    for (let k = 0; k < n; k++) {
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: SCORCH_TEX[k % SCORCH_TEX.length], transparent: true, opacity: 0, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6 }));
+      m.position.y = 0.5 + (k % 20) * 0.004; m.visible = false; m.renderOrder = 3;
+      scene.add(m); this.items.push({ m, t: 0, target: 0 });
+    }
+  }
+  // kind: 0 그을음+균열(폭발), 2 균열만(지진·붕괴), 3 그을음만(레이저)
+  add(x, z, R, kind = 0) {
+    const it = this.items[this.i]; this.i = (this.i + 1) % this.n;
+    it.m.material.map = SCORCH_TEX[kind === 2 ? 2 : kind === 3 ? 3 : (this.i % 2)];
+    it.m.position.x = x; it.m.position.z = z; it.m.scale.set(R * 2, 1, R * 2);
+    it.m.rotation.y = rand(0, 6.283);
+    it.m.visible = true; it.t = 0; it.target = kind === 2 ? 0.75 : 0.9;
+    it.m.material.opacity = 0;
+  }
+  update(dt) {
+    for (const it of this.items) {
+      if (!it.m.visible || it.m.material.opacity >= it.target) continue;
+      it.t += dt; it.m.material.opacity = Math.min(it.target, it.t * 4);
+    }
+  }
+  clear() { for (const it of this.items) { it.m.visible = false; it.m.material.opacity = 0; } }
+}
+const DC = new Decals(isMobile ? 36 : 70);
+
+// 폭발 조명 (하나를 돌려씀)
+const fxLight = new THREE.PointLight(0xff8a3a, 0, 320, 1.6);
+fxLight.position.y = 25; scene.add(fxLight);
+function flashLight(x, z, R, color = 0xff8a3a) {
+  fxLight.position.set(x, 10 + R * 0.4, z); fxLight.color.set(color);
+  fxLight.intensity = clamp(R * 130, 2500, 16000);
+}
+
+// 불·연기: 피해를 입은 건물이 한동안 탑니다
+function burn(b, amount) {
+  if (b.rubble) return;
+  b.fire = Math.min(1.6, (b.fire || 0) + amount);
+}
+function updateFires(dt) {
+  const rate = isMobile ? 0.55 : 1;
+  for (const b of S.buildings) {
+    if (!(b.fire > 0.02)) continue;
+    b.fire -= dt * (b.dead ? 0.09 : 0.055);
+    const f = Math.min(1, b.fire);
+    const n = Math.max(1, Math.round((b.dead ? 2 : 4) * f * rate * (0.6 + Math.min(1.2, b.r / 25))));
+    const top = Math.max(1.2, b.h);
+    for (let i = 0; i < n; i++) {
+      const a = rand(0, 6.283), rr = Math.sqrt(Math.random()) * b.r * 0.7;
+      const x = b.cx + Math.cos(a) * rr, z = b.cz + Math.sin(a) * rr;
+      if (!b.dead && Math.random() < 0.65) {
+        P.emit(x, top + rand(-1, 1), z, rand(-1.5, 1.5), rand(5, 11), rand(-1.5, 1.5), rand(3, 6) * (0.6 + f), rand(2, 5), rand(0.45, 0.9), 0, 0.9, 1.8, 6);
+      }
+      P.emit(x, top + rand(0, 3), z, rand(-1.2, 1.2) + 1.5, rand(3, 7), rand(-1.2, 1.2), rand(4, 7), rand(5, 8), rand(2.0, 3.8), 1, 0.26 * f, 0.6, 3.5, 0.24, 0.23, 0.22);
+      if (!b.dead && Math.random() < 0.25) P.emit(x, top, z, rand(-6, 6), rand(8, 18), rand(-6, 6), rand(0.8, 1.4), 0, rand(0.5, 1.1), 2, 1, 0.6, -30);
+    }
+  }
+}
 // ───────── 게임 상태 ─────────
 const S = {
   started: false, buildings: [], meshes: [], totalVol: 0, lostVol: 0, score: 0, destroyed: 0,
   night: 0, nightTarget: 0, shake: 0, time: 0, weapon: 'bomb', cd: {},
   projectiles: [], rings: [], timers: [], nukes: [], quake: null, lasers: [], clouds: [], temp: [],
   radius: 600, data: null, taps: 0, trees: null, labelsOn: true, topView: false,
-  lmObjs: [], lmRings: [], landmarks: [], lmDestroyed: 0, tourIdx: -1,
+  lmObjs: [], lmRings: [], landmarks: [], lmDestroyed: 0, tourIdx: -1, slow: 0, quips: [],
 };
 const landmarkGroup = new THREE.Group();
 scene.add(landmarkGroup);
@@ -423,6 +513,9 @@ function hitLandmarks(x, z, R, power = 1) {
       o.dir = [dx / L, dz / L]; o.power = power;
       S.score += 300; S.lmDestroyed++;
       toast(`⭐ ${o.line} +300`);
+      sayQuip(o.lb.landmark.title, quipForObject(o.name), true);
+      S.slow = Math.max(S.slow, 0.3);
+      DC.add(o.x, o.z, o.r * 1.2, 2);
       if (o.lb.label) o.lb.label.el.classList.add('dead');
       dustAt({ cx: o.x, cz: o.z, r: o.r, h: o.h }, 12);
       for (let i = 0; i < 18; i++) D.spawn(o.x + rand(-o.r, o.r) * 0.5, rand(1, o.h), o.z + rand(-o.r, o.r) * 0.5, o.dir[0] * rand(4, 14) + rand(-3, 3), rand(4, 14), o.dir[1] * rand(4, 14) + rand(-3, 3), rand(0.8, 2.2), new THREE.Color(0xd8d1c2));
@@ -526,7 +619,9 @@ function resetWorld() {
   S.clouds.forEach((c) => c.dispose()); S.clouds = [];
   S.temp.forEach((o) => scene.remove(o)); S.temp = [];
   S.nukes = []; S.quake = null; S.timers = []; S.shake = 0;
-  P.clear(); D.clear();
+  P.clear(); D.clear(); DC.clear();
+  for (const b of S.buildings) b.fire = 0;
+  S.quips = []; S.slow = 0; quipCur = null; $('quip').classList.remove('on');
   hud();
 }
 
@@ -572,6 +667,7 @@ function applyDrop(b, drop, ex, ez, power = 1) {
   S.lostVol += lost * b.area;
   S.score += lost * Math.sqrt(b.area) * 0.35;
   spawnDebris(b, lost, ex, ez, power);
+  burn(b, lost / Math.max(6, b.h0) * 1.3);
   if (b.th <= 0.61) {
     b.dead = true; S.destroyed++;
     S.score += 40 + Math.sqrt(b.area) * 2;
@@ -579,6 +675,11 @@ function applyDrop(b, drop, ex, ez, power = 1) {
     else if (b.short) toast(`💥 ${b.short} 붕괴!`);
     else if (b.h0 > 30) toast('💥 고층 건물 붕괴!');
     if (b.label) b.label.el.classList.add('dead');
+    // 멘트 + 히트스톱(큰 건물일수록 길게) + 붕괴 균열
+    sayQuip(b.landmark ? b.landmark.title : b.short, quipFor(b.short, b.style), !!b.landmark);
+    S.slow = Math.max(S.slow, b.landmark ? 0.32 : Math.min(0.22, 0.08 + Math.sqrt(b.area) * 0.003));
+    DC.add(b.cx, b.cz, b.r * 1.15, 2);
+    b.fire = Math.min(b.fire || 0, 0.7) + 0.2; // 잔해에서 연기가 한동안 피어오름
   }
   return lost;
 }
@@ -653,6 +754,9 @@ function explode(x, y, z, R, Pw, opts = {}) {
   if (S.trees) S.trees.knock(x, z, R * 0.8);
   fireball(x, y, z, R, opts.k || 1);
   ring(x, z, R * 1.5, 0.6 + R / 80);
+  if (R > 40) ring(x, z, R * 2.6, 1.1 + R / 60, 0xfff0d0);
+  DC.add(x, z, R * 0.95, 0);
+  flashLight(x, z, R);
   S.shake = Math.max(S.shake, clamp(R / 45, 0.25, 1.4));
   boom(clamp(R / 60, 0.25, 1));
 }
@@ -754,6 +858,8 @@ function fireLaser(x, y, z) {
       beam.position.set(px, 440, pz);
       beam.material.opacity = 0.55 * (0.8 + 0.2 * Math.sin(S.time * 60));
       damageAt(px, pz, 19, 280 * dt, 0.8);
+      if (Math.random() < 0.35) DC.add(px, pz, rand(6, 10), 3);
+      fxLight.position.set(px, 8, pz); fxLight.color.set(0xff3a5c); fxLight.intensity = 4500;
       for (let i = 0; i < 3; i++) {
         P.emit(px + rand(-3, 3), rand(1, 14), pz + rand(-3, 3), rand(-10, 10), rand(6, 24), rand(-10, 10), rand(1, 2.4), 0, rand(0.4, 0.9), 2, 1, 0.5, -38);
       }
@@ -782,6 +888,13 @@ function updateQuake(dt) {
   }
   const inten = Math.sin(clamp(t, 0, 1) * Math.PI) * 0.9 + 0.1;
   S.shake = Math.max(S.shake, 0.9 * inten);
+  if (Math.random() < 0.25 * inten) {
+    // 땅이 갈라짐: 캠퍼스 곳곳에 균열 + 흙먼지
+    const a = rand(0, 6.283), rr = Math.sqrt(Math.random()) * S.radius * 0.9;
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    DC.add(x, z, rand(14, 30), 2);
+    for (let i = 0; i < 6; i++) P.emit(x + rand(-8, 8), 1, z + rand(-8, 8), rand(-2, 2), rand(3, 8), rand(-2, 2), rand(6, 10), 7, rand(1, 2), 1, 0.5, 1, 1, 0.5, 0.42, 0.33);
+  }
   for (const b of S.buildings) {
     if (b.dead) { b.mesh.position.set(0, 0, 0); continue; }
     b.mesh.position.set(rand(-0.5, 0.5) * inten, 0, rand(-0.5, 0.5) * inten);
@@ -845,6 +958,9 @@ function fireNuke(x, y, z) {
   S.nukes.push({ x, z, r: 0, prev: 0, max: 310, speed: 330 });
   ring(x, z, 330, 1.0, 0xfff2cc);
   S.clouds.push(new Cloud(x, z));
+  DC.add(x, z, 150, 0);
+  flashLight(x, z, 110, 0xfff1c8);
+  S.slow = Math.max(S.slow, 0.45);
   fireball(x, 4, z, 90, 1.8);
   toast('☢️ 핵폭탄 투하!');
 }
@@ -898,6 +1014,26 @@ function showTarget(name, hover = false) {
 }
 
 
+
+// ───────── 디스 멘트 (붕괴할 때마다, 겹치지 않게 줄 세움) ─────────
+function sayQuip(title, text, big = false) {
+  S.quips.push({ title, text, big });
+  if (S.quips.length > 4) S.quips.splice(0, S.quips.length - 4);
+}
+let quipShownAt = -10, quipCur = null;
+function updateQuipUI() {
+  const el = $('quip');
+  const now = performance.now() / 1000;
+  const dur = quipCur ? (quipCur.big ? 4.2 : 3.2) : 0;
+  if (quipCur && now - quipShownAt > dur) { quipCur = null; el.classList.remove('on'); }
+  if (!quipCur && S.quips.length && now - quipShownAt > dur + 0.25) {
+    quipCur = S.quips.shift(); quipShownAt = now;
+    $('qtitle').textContent = (quipCur.big ? '⭐ ' : '💥 ') + (quipCur.title || '이름 모를 건물') + ' 붕괴';
+    $('qtext').textContent = quipCur.text;
+    el.classList.toggle('big', quipCur.big);
+    el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
+  }
+}
 // ───────── 건물 이름 라벨 (HTML, 겹침 방지 · 가까운 것부터) ─────────
 const labelLayer = $('labels');
 let labels = [];
@@ -1184,9 +1320,13 @@ async function saveCard() {
 let last = performance.now(), shakeV = new THREE.Vector3();
 function loop(now) {
   requestAnimationFrame(loop);
-  const dt = Math.min(0.05, (now - last) / 1000);
+  let dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  // 히트스톱: 건물이 무너지는 순간 잠깐 느리게
+  if (S.slow > 0) { S.slow -= dt; dt *= 0.28; }
   S.time += dt;
+  fxLight.intensity *= Math.pow(0.012, dt);
+  updateQuipUI();
 
   // 예약된 일
   for (let i = S.timers.length - 1; i >= 0; i--) {
@@ -1218,6 +1358,8 @@ function loop(now) {
   updateQuake(dt);
   updateNukes(dt);
   updateLandmarks(dt);
+  updateFires(dt);
+  DC.update(dt);
   animateBuildings(dt);
   P.update(dt);
   D.update(dt);
@@ -1320,5 +1462,5 @@ async function boot() {
   hud();
 }
 
-window.__SMASH__ = { S, camera, controls }; // 디버그/테스트용
+window.__SMASH__ = { S, camera, controls, explode, applyDrop, fireQuake, fireNuke }; // 디버그/테스트용
 boot().catch((e) => { console.error(e); showErr(e.message || String(e)); });

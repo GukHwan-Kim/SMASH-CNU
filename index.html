@@ -36,6 +36,17 @@
   .label.landmark.on { font-size:calc(13.5px * var(--s)); opacity:1; }
   .label.landmark::after { background:rgba(255,200,90,.8); height:10px; }
   .label.landmark.dead { color:#ffb9a6; border-color:rgba(255,120,90,.6); }
+  /* 디스 멘트 */
+  #quip { position:fixed; left:50%; top:38%; transform:translate(-50%, 0) scale(.92); width:min(92vw, 560px); padding:14px 20px; border-radius:18px; text-align:center;
+    background:linear-gradient(160deg, rgba(20,12,8,.9), rgba(40,18,10,.9)); border:1px solid rgba(255,150,80,.55); box-shadow:0 10px 40px rgba(0,0,0,.45);
+    opacity:0; pointer-events:none; z-index:13; transition:opacity .2s, transform .2s; }
+  #quip.on { opacity:1; transform:translate(-50%, 0) scale(1); animation:quipIn .35s cubic-bezier(.2,1.4,.4,1); }
+  #quip.big { border-color:rgba(255,210,110,.85); background:linear-gradient(160deg, rgba(60,42,12,.94), rgba(30,18,8,.94)); }
+  @keyframes quipIn { 0% { transform:translate(-50%, 10px) scale(.7); opacity:0; } 60% { transform:translate(-50%, -4px) scale(1.04); opacity:1; } 100% { transform:translate(-50%, 0) scale(1); } }
+  #qtitle { font-size:13px; font-weight:800; color:#ffb080; letter-spacing:.02em; margin-bottom:4px; }
+  #quip.big #qtitle { color:#ffe9b8; }
+  #qtext { font-size:17px; font-weight:800; line-height:1.4; color:#fff6ee; word-break:keep-all; }
+  @media (max-width:600px) { #quip { top:30%; padding:12px 14px; } #qtext { font-size:15px; } }
   /* 랜드마크 카드 (투어) */
   #lmcard { position:fixed; left:50%; bottom:calc(max(10px, env(safe-area-inset-bottom)) + 150px); transform:translate(-50%, 12px); display:flex; gap:12px; align-items:center;
     padding:10px 16px; border-radius:16px; background:linear-gradient(135deg, rgba(60,42,12,.92), rgba(24,18,8,.92)); border:1px solid rgba(255,210,110,.6);
@@ -181,6 +192,7 @@
   </div>
   <div id="target"></div>
   <div id="toast"></div>
+  <div id="quip"><div id="qtitle"></div><div id="qtext"></div></div>
   <div id="lmcard"><div id="lmicon"></div><div><div id="lmtitle"></div><div id="lmdesc"></div></div></div>
   <div id="bottom">
     <div id="hint"></div>

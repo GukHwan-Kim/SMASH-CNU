@@ -3,7 +3,7 @@
 //  - 상징물 백마상
 //  - 랜드마크 건물: 옥상 간판 · 금색 라벨 · 바닥 하이라이트 링 · 파괴 보너스
 import * as THREE from 'three';
-import { hashStr } from './geo.js';
+import { hashStr, mulberry } from './geo.js';
 
 export const SCHOOL = { ko: '충남대학교', en: 'CHUNGNAM NATIONAL UNIVERSITY', short: '충남대' };
 
@@ -11,7 +11,8 @@ export const SCHOOL = { ko: '충남대학교', en: 'CHUNGNAM NATIONAL UNIVERSITY
 // 패턴은 OSM 건물 이름(접두 "충남대학교 " 제거 후)에 대해 검사합니다. 먼저 맞는 규칙 하나만 적용.
 export const LANDMARKS = [
   [/정심화/, '🎭', '정심화국제문화회관', '입학식·졸업식·공연이 열리는 충남대의 대표 행사장', 100],
-  [/중앙도서관/, '📚', '중앙도서관', '시험기간 자리 전쟁의 성지', 98],
+  [/중앙도서관/, '📚', '중앙도서관', '시험기간 자리 전쟁의 성지', 99],
+  [/인문대학|인문대/, '📖', '인문대학', '인문대학 — 영탑지 옆', 97],
   [/대학본부|^본부$|^본관$/, '🏛️', '대학본부', '학교 행정의 중심', 95],
   [/백마상|백마\s*동상/, '🐎', '백마상', '충남대의 상징, 백마', 94],
   [/제?1\s*학생회관|^학생회관/, '🍱', '제1학생회관', '학식·동아리·휴게의 중심', 90],
@@ -25,7 +26,6 @@ export const LANDMARKS = [
   [/운동장|대운동장|경기장/, '🏃', null, '대운동장', 60],
   [/농업생명과학대학|농생대|농대/, '🌾', null, '농업생명과학대학', 66],
   [/자연과학대학|자연대/, '🧪', null, '자연과학대학', 66],
-  [/인문대학|인문대/, '📖', null, '인문대학', 66],
   [/사회과학대학|사회대/, '⚖️', null, '사회과학대학', 66],
   [/경상대학|경상대|경영/, '📈', null, '경상대학', 66],
   [/사범대학|사범대/, '🎓', null, '사범대학', 64],
@@ -182,6 +182,44 @@ export function makeHorseStatue() {
   mane.rotation.z = -0.35; mane.position.set(1.2, 4.05, 0);
   horse.add(body, neck, head, ear1, ear2, tail, mane);
   grp.add(horse);
+  grp.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  return grp;
+}
+
+// ───────── 조각공원 (막동) ─────────
+// 받침대 위 추상 조각 n점을 반지름 r 안에 흩어 놓습니다. 결정적 난수라 늘 같은 배치.
+export function makeSculptureGarden(r = 25, seed = 3) {
+  const grp = new THREE.Group();
+  const R = mulberry(seed);
+  const stone = new THREE.MeshLambertMaterial({ color: 0x8d8a84 });
+  const mats = [0xc9c4ba, 0x6e6a63, 0xb8742f, 0x4f6b8a, 0xe3ded4, 0x3a3f46].map((c) => new THREE.MeshLambertMaterial({ color: c }));
+  const n = Math.max(5, Math.min(9, Math.round(r / 4)));
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * 6.283 + R() * 0.6, rr = r * (0.3 + 0.6 * R());
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    const ph = 1.0 + R() * 1.0, pw = 2.2 + R() * 1.6;
+    const plinth = new THREE.Mesh(new THREE.BoxGeometry(pw, ph, pw), stone);
+    plinth.position.set(x, ph / 2, z);
+    grp.add(plinth);
+    const m = mats[i % mats.length];
+    const k = i % 6;
+    let sc;
+    if (k === 0) sc = new THREE.Mesh(new THREE.TorusGeometry(1.3, 0.35, 10, 24), m);
+    else if (k === 1) sc = new THREE.Mesh(new THREE.ConeGeometry(0.9, 3.6, 7), m);
+    else if (k === 2) { sc = new THREE.Mesh(new THREE.BoxGeometry(0.7, 3.4, 0.7), m); sc.rotation.set(0.25, 0.6, 0.2); }
+    else if (k === 3) sc = new THREE.Mesh(new THREE.SphereGeometry(1.2, 14, 10), m);
+    else if (k === 4) sc = new THREE.Mesh(new THREE.TorusKnotGeometry(0.9, 0.28, 48, 8), m);
+    else { sc = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.9, 3.2, 8), m); sc.rotation.z = 0.3; }
+    sc.scale.setScalar(1.9);
+    sc.position.set(x, ph + 3.6, z);
+    sc.rotation.y = R() * 6.283;
+    grp.add(sc);
+  }
+  // 산책로: 바닥에 얇은 밝은 원 띠
+  const path = new THREE.Mesh(new THREE.RingGeometry(r * 0.5, r * 0.7, 40).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xcfc5b2, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+  path.position.y = 0.3; path.receiveShadow = true; grp.add(path);
+  const plaza = new THREE.Mesh(new THREE.CircleGeometry(r * 0.3, 32).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xd8d0bf, polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 }));
+  plaza.position.y = 0.3; grp.add(plaza);
   grp.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return grp;
 }

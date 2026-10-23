@@ -21,10 +21,12 @@
 `https://<내아이디>.github.io/SMASH-CNU/?to=민지&msg=시험기간%20화이팅`
 
 ## 지도 데이터 (중요)
-- 기본: 열릴 때 OpenStreetMap에서 충남대 건물·도로·녹지·교문을 자동으로 불러옵니다(한 번 받으면 브라우저에 저장).
+- **`campus.json`이 들어 있습니다** — 실제 충남대 대덕캠퍼스 OSM 데이터(건물 168동, 이름 80동, 도로 467개, 영탑지·조각공원·백마상 포함). `index.html` 옆에 그대로 두세요. 이 파일이 있으면 지도 서버를 거치지 않습니다.
+- 파일이 없을 때: 열릴 때 OpenStreetMap에서 자동으로 불러옵니다(한 번 받으면 브라우저에 저장).
 - 불러오지 못하면 내장 근사 캠퍼스로 자동 전환됩니다(실제 지도 아님).
-- **추천**: 인터넷 되는 PC에서 `python3 tools/fetch_campus.py` → 생성된 `campus.json`을 `index.html` 옆에 두고 함께 올리세요. 받는 사람 폰에서 훨씬 빠르고 안정적입니다.
-- 실행 결과에 "건물 N동(이름 M)"이 찍힙니다. **이름이 없는 건물은 라벨이 안 뜹니다.** OSM(openstreetmap.org)에서 해당 건물의 `name`을 보태면 다음 fetch부터 반영됩니다. 정문 노드가 OSM에 없으면 게임이 캠퍼스 동쪽(대학로 방향) 경계에 정문을 자동 배치합니다.
+- 데이터를 새로 받으려면: `python3 tools/fetch_campus.py`(또는 overpass-turbo.eu에서 `tools/overpass_query.txt` 실행 → Export → raw OSM data → `campus.json`으로 저장).
+- 정문은 OSM에 노드가 없어서 **캠퍼스 경계를 지나는 가장 큰 도로(남쪽 대학로 쪽) 위**에 자동 배치됩니다. 백마상·영탑지·조각공원은 OSM에 있는 실제 위치입니다.
+- 실행 결과에 "건물 N동(이름 M)"이 찍힙니다. **이름이 없는 건물은 라벨이 안 뜹니다.** OSM(openstreetmap.org)에서 해당 건물의 `name`을 보태면 다음 fetch부터 반영됩니다.
 
 ### 랜드마크 규칙 바꾸기
 `src/landmarks.js`의 `LANDMARKS` 배열에 `[이름 정규식, 아이콘, 표시 이름, 한 줄 설명, 우선순위]`를 추가·수정하면 됩니다. 건물 스타일 규칙은 `src/geo.js`의 `RULES`에 있습니다.

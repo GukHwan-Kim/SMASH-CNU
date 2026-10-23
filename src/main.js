@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
 import { loadRealCampus, buildFallbackCampus, plantTrees } from './geo.js';
 import { makeBuildingGeometry, makeBuildingMaterial, makeRubbleMaterial, makeEdgeLines, makeEdgeMaterial, paintGround, makeTrees } from './world.js';
-import { tagLandmarks, makeGate, makeHorseStatue, makeRoofSign, makeHalo, gateRotation, SCHOOL } from './landmarks.js';
+import { tagLandmarks, makeGate, makeHorseStatue, makeRoofSign, makeHalo, makeSculptureGarden, gateRotation, SCHOOL } from './landmarks.js';
 
 const $ = (id) => document.getElementById(id);
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -71,7 +71,7 @@ ground.receiveShadow = true;
 scene.add(ground);
 // 캠퍼스 바닥: 도로·잔디·운동장을 그린 캔버스 텍스처 한 장
 const groundCanvas = document.createElement('canvas');
-groundCanvas.width = groundCanvas.height = isMobile ? 2048 : 4096;
+groundCanvas.width = groundCanvas.height = isMobile ? 3072 : 4096;
 const groundTex = new THREE.CanvasTexture(groundCanvas);
 groundTex.colorSpace = THREE.SRGBColorSpace;
 groundTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
@@ -359,13 +359,24 @@ function createLandmarks(data) {
   const mainGate = (data.gates || []).find((g) => g.name === '정문');
   for (const g of data.gates || []) {
     const main = g.name === '정문';
-    const gate = makeGate(g.name, main ? 18 : 12);
+    const gate = makeGate(g.name, g.span || (main ? 18 : 12));
     gate.position.set(g.x, 0, g.z);
-    gate.rotation.y = gateRotation(g.x, g.z, 0, 0);
-    addObj(gate, { r: main ? 14 : 10, h: 11, name: g.name, icon: '🚪', kind: 'gate', title: `${SCHOOL.ko} ${g.name}`, pri: main ? 200 : 40,
+    gate.rotation.y = typeof g.ang === 'number' ? g.ang : gateRotation(g.x, g.z, 0, 0);
+    addObj(gate, { r: (g.span || 18) * 0.75, h: 11, name: g.name, icon: '🚪', kind: 'gate', title: `${SCHOOL.ko} ${g.name}`, pri: main ? 200 : 40,
       line: `${SCHOOL.short} ${g.name}이 무너졌다!`, desc: main ? '여기서부터 충남대 — 대학로 쪽 정문' : `${g.name}으로 드나드는 길` });
   }
   for (const m of data.monuments || []) {
+    if (m.kind === 'pond' || m.kind === 'park') {
+      // 연못·공원: 3D 모델 없이 라벨·투어·하이라이트 링만
+      const isSculpt = /막동|조각/.test(m.name);
+      const fake = { cx: m.x, cz: m.z, r: m.r || 25, h: isSculpt ? 5 : 1, h0: isSculpt ? 5 : 1, area: 900, campus: true, short: m.name, dead: false,
+        landmark: { icon: m.kind === 'pond' ? '🪷' : isSculpt ? '🗿' : '🌳', title: m.name,
+          desc: m.kind === 'pond' ? '캠퍼스의 연못. 벤치에 앉아 멍 때리기 좋은 곳' : isSculpt ? '조각공원 — 작품 사이로 산책하는 곳' : '캠퍼스의 쉼터', pri: isSculpt ? 88 : 85 } };
+      const ring = makeHalo(fake); ring.userData.phase = Math.random() * 6; landmarkGroup.add(ring); S.lmRings.push({ mesh: ring, b: fake });
+      if (isSculpt) { const g = makeSculptureGarden(Math.min(m.r || 25, 40), 3); g.position.set(m.x, 0, m.z); landmarkGroup.add(g); }
+      S.lmObjs.push({ grp: ring, x: m.x, z: m.z, r: 0, h: 1, name: m.name, icon: fake.landmark.icon, kind: m.kind, dead: false, t: 1, indestructible: true, lb: fake });
+      continue;
+    }
     if (m.kind !== 'horse') continue;
     const st = makeHorseStatue();
     st.position.set(m.x, 0, m.z);
@@ -377,6 +388,7 @@ function createLandmarks(data) {
 function tourList() {
   const objs = S.lmObjs.map((o) => o.lb);
   return [...objs.filter((p) => p.landmark.icon === '🚪' && p.short === '정문'), ...objs.filter((p) => p.landmark.icon === '🐎'),
+    ...objs.filter((p) => p.landmark.icon === '🪷' || p.landmark.icon === '🗿' || p.landmark.icon === '🌳'),
     ...S.landmarks, ...objs.filter((p) => p.landmark.icon === '🚪' && p.short !== '정문')];
 }
 function tourNext() {
@@ -404,7 +416,7 @@ function showLmCard(t, idx) {
 }
 function hitLandmarks(x, z, R, power = 1) {
   for (const o of S.lmObjs) {
-    if (o.dead) continue;
+    if (o.dead || o.indestructible) continue;
     if (Math.hypot(o.x - x, o.z - z) - o.r * 0.6 < R * 0.9) {
       o.dead = true; o.t = 0; o.lb.dead = true;
       const dx = o.x - x, dz = o.z - z, L = Math.hypot(dx, dz) || 1;
@@ -419,7 +431,7 @@ function hitLandmarks(x, z, R, power = 1) {
 }
 function updateLandmarks(dt) {
   for (const o of S.lmObjs) {
-    if (!o.dead || o.t >= 1) continue;
+    if (!o.dead || o.t >= 1 || o.indestructible) continue;
     o.t = Math.min(1, o.t + dt * 0.7);
     const u = easeOut(o.t);
     o.grp.rotation.x = o.dir[1] * u * 1.35; o.grp.rotation.z = -o.dir[0] * u * 1.35;
@@ -896,8 +908,11 @@ function clearLabels() {
 function buildLabels() {
   clearLabels();
   const targets = [...S.buildings, ...S.lmObjs.map((o) => o.lb)];
+  const biggest = new Map();
+  for (const b of S.buildings) if (b.short && (!biggest.has(b.short) || biggest.get(b.short).area < b.area)) biggest.set(b.short, b);
   for (const b of targets) {
     if (!b.short) continue;
+    if (biggest.has(b.short) && biggest.get(b.short) !== b) continue; // 같은 이름 조각은 가장 큰 것만
     const el = document.createElement('div');
     el.className = 'label' + (b.campus ? '' : ' minor') + (b.landmark ? ' landmark' : '');
     el.textContent = b.landmark ? `${b.landmark.icon} ${b.landmark.title || b.short}` : b.short;
@@ -1298,7 +1313,7 @@ async function boot() {
     const more = S.landmarks.length - 6;
     if (names.length) $('lms').textContent = '랜드마크 ' + (S.landmarks.length + S.lmObjs.length) + '곳: ' + names.join(' · ') + (more > 0 ? ` 외 ${more}곳` : '') + ' — 📍 버튼으로 둘러보기';
     const gg = (data.gates || []).find((g) => g.name === '정문');
-    if (gg && gg.src === 'guess') $('note').textContent += ($('note').textContent ? ' ' : '') + '지도에 정문 위치가 없어 캠퍼스 동쪽(대학로 방향) 경계에 정문을 두었어요.';
+    if (gg && gg.src === 'guess') $('note').textContent += ($('note').textContent ? ' ' : '') + '지도에 정문 위치가 없어 추정 위치에 정문을 두었어요.';
   }
   $('loading').style.display = 'none';
   $('intro').style.display = 'flex';

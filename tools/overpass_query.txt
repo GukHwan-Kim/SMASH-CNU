@@ -1,0 +1,18 @@
+[out:json][timeout:90];
+(way["amenity"="university"]["name"~"충남대"];relation["amenity"="university"]["name"~"충남대"];)->.u;
+.u map_to_area->.a;
+(
+  way["building"](area.a);
+  way["highway"](area.a);
+  way["leisure"~"^(park|garden|pitch|track|playground|stadium)$"](area.a);
+  way["landuse"~"^(grass|forest|meadow|scrub|reservoir|basin)$"](area.a);
+  way["natural"~"^(wood|water|scrub|grassland)$"](area.a);
+  way["amenity"="parking"](area.a);
+  node["natural"="tree"](area.a);
+  node["name"~"정문|서문|후문|북문|남문|동문|쪽문|백마|영탑|막동|조각"](area.a);
+  way["name"~"정문|서문|후문|영탑|막동|조각"](area.a);
+  relation["name"~"영탑|막동|조각"](area.a);
+  node["entrance"="main"](area.a);
+  .u;
+);
+out geom tags;

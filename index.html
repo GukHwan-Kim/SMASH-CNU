@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SMASH 충남대 — 우리 캠퍼스 부수기</title>
+<meta name="description" content="충남대 캠퍼스를 3D로 부수는 시험기간 스트레스 해소 게임. 폭탄, 야구 배트, 레이저, 운석, 지진, 핵폭탄.">
+<meta property="og:title" content="SMASH 충남대">
+<meta property="og:description" content="우리 캠퍼스를 부셔 (시험기간 스트레스 해소)">
+<meta name="theme-color" content="#0b1224">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/" } }
+</script>
+<style>
+  :root { --accent:#3b82f6; --hot:#ff7a1a; --glass:rgba(12,18,34,.66); --line:rgba(255,255,255,.14); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; overflow:hidden; overscroll-behavior:none; }
+  body {
+    background:linear-gradient(180deg,#5ea6ee 0%,#d4e9fb 62%);
+    font-family:system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif;
+    color:#fff; user-select:none; -webkit-user-select:none;
+  }
+  #c { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+  .glass { background:var(--glass); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:16px; }
+  button { font:inherit; color:inherit; cursor:pointer; }
+
+  /* 로딩 · 인트로 */
+  .overlay { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; padding:20px; z-index:20; }
+  #loading { flex-direction:column; gap:14px; background:radial-gradient(circle at 50% 40%,#16254a,#070b16); text-align:center; }
+  #loading h1 { margin:0; font-size:30px; letter-spacing:.02em; }
+  #loading .spin { width:38px; height:38px; border-radius:50%; border:4px solid rgba(255,255,255,.18); border-top-color:var(--hot); animation:sp 1s linear infinite; }
+  @keyframes sp { to { transform:rotate(360deg); } }
+  #lstatus { opacity:.8; font-size:14px; min-height:20px; }
+  #skip { display:none; background:transparent; border:1px solid var(--line); border-radius:999px; padding:8px 16px; font-size:13px; opacity:.9; }
+
+  #intro { display:none; pointer-events:none; align-items:flex-end; justify-content:center; padding-bottom:max(28px, env(safe-area-inset-bottom)); }
+  #intro .card { pointer-events:auto; width:min(520px,100%); padding:22px 22px 18px; text-align:center; }
+  #to { display:none; font-size:15px; color:#ffd7a8; margin-bottom:6px; font-weight:700; }
+  #intro h1 { margin:0 0 4px; font-size:clamp(30px,8vw,44px); font-weight:900; letter-spacing:.01em; }
+  #intro h1 b { color:var(--hot); }
+  #intro p { margin:6px 0; font-size:14px; line-height:1.55; opacity:.92; }
+  #msg { display:none; margin:10px 0 4px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,.08); font-size:14px; }
+  #note { font-size:12px; color:#ffd7a8; margin-top:8px; line-height:1.45; }
+  #start { margin-top:12px; width:100%; border:0; border-radius:14px; padding:15px; font-size:18px; font-weight:800; background:linear-gradient(135deg,#ff8a2a,#ff4d2a); box-shadow:0 8px 24px rgba(255,90,30,.4); }
+  #start:active { transform:translateY(1px); }
+  #src { margin-top:10px; font-size:11px; opacity:.6; }
+
+  /* HUD */
+  #hud { display:none; }
+  #top { position:fixed; top:max(10px, env(safe-area-inset-top)); left:10px; right:10px; display:flex; gap:10px; align-items:flex-start; z-index:10; pointer-events:none; }
+  #stat { flex:1; padding:10px 14px; pointer-events:none; max-width:460px; }
+  #stat .row { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  #stat .t { font-weight:900; font-size:15px; letter-spacing:.02em; }
+  #stat .t b { color:var(--hot); }
+  #pct { font-size:26px; font-weight:900; font-variant-numeric:tabular-nums; }
+  #barwrap { height:8px; border-radius:99px; background:rgba(255,255,255,.14); overflow:hidden; margin:6px 0 4px; }
+  #bar { height:100%; width:0; background:linear-gradient(90deg,#ffb347,#ff4d2a); transition:width .2s; }
+  #stat .sub { display:flex; justify-content:space-between; font-size:12px; opacity:.8; font-variant-numeric:tabular-nums; }
+  #btns { display:flex; flex-direction:column; gap:8px; pointer-events:auto; }
+  .ib { width:44px; height:44px; border-radius:14px; font-size:20px; display:flex; align-items:center; justify-content:center; padding:0; }
+  .ib.on { background:rgba(80,110,220,.7); }
+  #target { position:fixed; top:calc(max(10px, env(safe-area-inset-top)) + 92px); left:50%; transform:translateX(-50%); padding:7px 14px; border-radius:99px; background:var(--glass); border:1px solid var(--line); font-size:14px; font-weight:700; opacity:0; transition:opacity .25s; z-index:10; pointer-events:none; white-space:nowrap; }
+  #toast { position:fixed; top:calc(max(10px, env(safe-area-inset-top)) + 130px); left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:6px; z-index:11; pointer-events:none; }
+  .toastItem { padding:8px 16px; border-radius:99px; background:rgba(20,10,8,.78); border:1px solid rgba(255,140,60,.5); font-weight:800; font-size:15px; animation:pop .25s ease-out; white-space:nowrap; }
+  @keyframes pop { from { transform:scale(.7); opacity:0; } to { transform:scale(1); opacity:1; } }
+
+  #bottom { position:fixed; left:0; right:0; bottom:max(10px, env(safe-area-inset-bottom)); display:flex; flex-direction:column; align-items:center; gap:8px; z-index:10; pointer-events:none; }
+  #hint { padding:6px 14px; border-radius:99px; background:var(--glass); border:1px solid var(--line); font-size:13px; opacity:.95; text-align:center; max-width:94vw; }
+  #weapons { display:flex; gap:8px; padding:8px; pointer-events:auto; max-width:100vw; overflow-x:auto; }
+  .wbtn { position:relative; overflow:hidden; flex:0 0 auto; width:72px; height:72px; border-radius:16px; border:1px solid var(--line); background:rgba(255,255,255,.07); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; padding:0; }
+  .wbtn .ic { font-size:26px; line-height:1; }
+  .wbtn .nm { font-size:11px; font-weight:700; opacity:.9; }
+  .wbtn.on { background:linear-gradient(160deg,rgba(255,140,50,.75),rgba(255,70,40,.65)); border-color:rgba(255,190,120,.8); box-shadow:0 0 0 2px rgba(255,170,90,.35); }
+  .cdfill { position:absolute; left:0; right:0; bottom:0; height:0; background:rgba(0,0,0,.55); pointer-events:none; }
+  #credit { position:fixed; left:10px; bottom:6px; font-size:10px; opacity:.55; z-index:5; pointer-events:none; display:none; }
+  @media (min-width:900px) { #credit { display:block; } .wbtn { width:84px; height:80px; } }
+
+  #flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:30; }
+
+  /* 결과 */
+  #result { display:none; z-index:40; background:rgba(5,8,18,.72); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); }
+  #result .card { width:min(420px,100%); padding:24px 22px 20px; text-align:center; }
+  #rrank { font-size:120px; font-weight:900; line-height:1; background:linear-gradient(180deg,#fff,#ffb36b); -webkit-background-clip:text; background-clip:text; color:transparent; }
+  #rtitle { font-size:18px; font-weight:800; color:#ffd7a8; margin-bottom:14px; }
+  .rrow { display:flex; justify-content:space-between; padding:10px 14px; margin:6px 0; border-radius:12px; background:rgba(255,255,255,.08); font-size:15px; }
+  .rrow b { font-variant-numeric:tabular-nums; }
+  .rbtns { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+  .rbtns button { border-radius:12px; padding:12px; font-weight:800; border:1px solid var(--line); background:rgba(255,255,255,.1); }
+  #rsave { background:linear-gradient(135deg,#ff8a2a,#ff4d2a); border:0; }
+
+  #err { display:none; position:fixed; left:10px; right:10px; bottom:10px; z-index:99; padding:12px 14px; border-radius:12px; background:#5a1020; border:1px solid #ff6b81; font-size:13px; line-height:1.4; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="loading" class="overlay">
+  <div class="spin"></div>
+  <h1>SMASH 충남대</h1>
+  <div id="lstatus">캠퍼스를 불러오는 중…</div>
+  <button id="skip">기다리지 않고 바로 시작</button>
+</div>
+
+<div id="intro" class="overlay">
+  <div class="card glass">
+    <div id="to"></div>
+    <h1>SMASH <b>충남대</b></h1>
+    <p>우리 캠퍼스를 3D로 부숴 보세요.<br>폭탄 · 야구 배트 · 레이저 · 운석 · 지진 · 핵폭탄.<br>시험기간 스트레스 해소용입니다.</p>
+    <div id="msg"></div>
+    <p style="font-size:12px;opacity:.7">탭: 공격 · 드래그: 회전 · 두 손가락: 확대/이동<br>(PC: 휠 확대 · 오른쪽 버튼 드래그 이동)</p>
+    <div id="note"></div>
+    <button id="start">부수러 가기 →</button>
+    <div id="src"></div>
+    <div style="font-size:10px;opacity:.5;margin-top:4px">충남대학교와 관계없는 비공식 팬 게임입니다.</div>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="top">
+    <div id="stat" class="glass">
+      <div class="row"><span class="t">SMASH <b>충남대</b></span><span id="pct">0.0%</span></div>
+      <div id="barwrap"><div id="bar"></div></div>
+      <div class="sub"><span>점수 <b id="score">0</b></span><span id="cnt">0 / 0동</span></div>
+    </div>
+    <div id="btns">
+      <button id="night" class="ib glass" aria-label="밤 모드">🌙</button>
+      <button id="mute" class="ib glass" aria-label="소리">🔊</button>
+      <button id="finish" class="ib glass" aria-label="결과 보기">🏁</button>
+    </div>
+  </div>
+  <div id="target"></div>
+  <div id="toast"></div>
+  <div id="bottom">
+    <div id="hint"></div>
+    <div id="weapons" class="glass"></div>
+  </div>
+  <div id="credit"></div>
+</div>
+
+<div id="result" class="overlay">
+  <div class="card glass">
+    <div id="rrank">D</div>
+    <div id="rtitle"></div>
+    <div class="rrow"><span>파괴율</span><b id="rpct"></b></div>
+    <div class="rrow"><span>점수</span><b id="rscore"></b></div>
+    <div class="rrow"><span>무너뜨린 건물</span><b id="rcnt"></b></div>
+    <div class="rbtns">
+      <button id="rsave">결과 카드 저장 / 공유</button>
+      <button id="rcont">계속 부수기</button>
+      <button id="rreset">처음부터 다시</button>
+    </div>
+  </div>
+</div>
+
+<div id="flash"></div>
+<div id="err"></div>
+
+<script type="module" src="./src/main.js"></script>
+<noscript><div style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#0b1224;color:#fff">JavaScript를 켜 주세요.</div></noscript>
+</body>
+</html>

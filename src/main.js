@@ -1,14 +1,16 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
-import { loadRealCampus, buildFallbackCampus } from './geo.js';
-import { makeBuildingGeometry, makeRoadGeometry, makeWallMaterial } from './world.js';
+import { loadRealCampus, buildFallbackCampus, plantTrees } from './geo.js';
+import { makeBuildingGeometry, makeBuildingMaterial, makeRubbleMaterial, makeEdgeLines, makeEdgeMaterial, paintGround, makeTrees } from './world.js';
+import { tagLandmarks, makeGate, makeHorseStatue, makeRoofSign, makeHalo, gateRotation, SCHOOL } from './landmarks.js';
 
 const $ = (id) => document.getElementById(id);
 const rand = (a, b) => a + Math.random() * (b - a);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const lerp = (a, b, t) => a + (b - a) * t;
 const easeOut = (t) => 1 - Math.pow(1 - clamp(t, 0, 1), 3);
-const isMobile = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent);
+// ?lite=1 을 붙이면 저사양 모드(그림자 끔, 텍스처 축소)로 강제 실행
+const isMobile = matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|Mobi/i.test(navigator.userAgent) || /[?&]lite=1/.test(location.search);
 
 // ───────── 오류 표시 (선물 받는 사람 화면에서 조용히 멈추지 않도록) ─────────
 function showErr(msg) {
@@ -63,16 +65,22 @@ if (!isMobile) {
   sun.shadow.camera.far = 1800;
 }
 
-const groundMat = new THREE.MeshLambertMaterial({ color: 0x86a566 });
+const groundMat = new THREE.MeshLambertMaterial({ color: 0xa3a98f }); // 바닥 텍스처 바깥쪽과 같은 색
 const ground = new THREE.Mesh(new THREE.CircleGeometry(9000, 48).rotateX(-Math.PI / 2), groundMat);
 ground.receiveShadow = true;
 scene.add(ground);
-const lawnMat = new THREE.MeshLambertMaterial({ color: 0x93b370, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
-const lawn = new THREE.Mesh(new THREE.CircleGeometry(1, 56).rotateX(-Math.PI / 2), lawnMat);
-lawn.position.y = 0.08;
+// 캠퍼스 바닥: 도로·잔디·운동장을 그린 캔버스 텍스처 한 장
+const groundCanvas = document.createElement('canvas');
+groundCanvas.width = groundCanvas.height = isMobile ? 2048 : 4096;
+const groundTex = new THREE.CanvasTexture(groundCanvas);
+groundTex.colorSpace = THREE.SRGBColorSpace;
+groundTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+groundTex.generateMipmaps = true; groundTex.minFilter = THREE.LinearMipmapLinearFilter;
+const lawnMat = new THREE.MeshLambertMaterial({ map: groundTex, color: 0xffffff, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+const lawn = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), lawnMat);
+lawn.position.y = 0.06;
 lawn.receiveShadow = true;
 scene.add(lawn);
-const roadMat = new THREE.MeshLambertMaterial({ color: 0x6f757c, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -92,19 +100,19 @@ function resize() {
   const scale = (h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360));
   particleMat.uniforms.uScale.value = scale;
 }
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { resize(); updateLabels(true); });
 
 // ───────── 재질 ─────────
 const nightU = { value: 0 };
-const wallMat = makeWallMaterial(nightU);
-const capMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-const rubbleCap = new THREE.MeshLambertMaterial({ color: 0x57524b });
-const rubbleWall = new THREE.MeshLambertMaterial({ color: 0x4a463f });
-// 창문 셰이더가 컴파일에 실패하면 창문 없는 기본 재질로 자동 전환
+const bldMat = makeBuildingMaterial(nightU);
+const rubbleMat = makeRubbleMaterial();
+const edgeMat = makeEdgeMaterial();
+// 외벽 셰이더가 컴파일에 실패하면 창문 없는 기본 재질로 자동 전환
 renderer.debug.onShaderError = (gl, program, vs, fs) => {
-  console.warn('창문 셰이더 컴파일 실패 → 기본 재질로 대체');
-  wallMat.onBeforeCompile = () => {};
-  wallMat.needsUpdate = true;
+  console.warn('외벽 셰이더 컴파일 실패 → 기본 재질로 대체', gl.getShaderInfoLog(fs));
+  bldMat.onBeforeCompile = () => {};
+  bldMat.vertexColors = false; bldMat.color.set(0xd9d2c3);
+  bldMat.needsUpdate = true;
 };
 
 // ───────── 파티클 ─────────
@@ -310,8 +318,11 @@ const S = {
   started: false, buildings: [], meshes: [], totalVol: 0, lostVol: 0, score: 0, destroyed: 0,
   night: 0, nightTarget: 0, shake: 0, time: 0, weapon: 'bomb', cd: {},
   projectiles: [], rings: [], timers: [], nukes: [], quake: null, lasers: [], clouds: [], temp: [],
-  radius: 600, data: null, taps: 0,
+  radius: 600, data: null, taps: 0, trees: null, labelsOn: true, topView: false,
+  lmObjs: [], lmRings: [], landmarks: [], lmDestroyed: 0, tourIdx: -1,
 };
+const landmarkGroup = new THREE.Group();
+scene.add(landmarkGroup);
 const buildingGroup = new THREE.Group();
 scene.add(buildingGroup);
 const roadGroup = new THREE.Group();
@@ -320,22 +331,130 @@ scene.add(roadGroup);
 function after(sec, fn) { S.timers.push({ t: S.time + sec, fn }); }
 
 function clearWorld() {
-  for (const m of S.meshes) { buildingGroup.remove(m); m.geometry.dispose(); }
+  for (const m of S.meshes) { buildingGroup.remove(m); m.geometry.dispose(); m.children.forEach((c) => c.geometry.dispose()); }
   S.buildings = []; S.meshes = [];
   while (roadGroup.children.length) { const c = roadGroup.children.pop(); c.geometry.dispose(); }
+  if (S.trees) { scene.remove(S.trees.trunks, S.trees.crowns); S.trees = null; }
+  while (landmarkGroup.children.length) landmarkGroup.remove(landmarkGroup.children[0]);
+  S.lmObjs = []; S.lmRings = []; S.landmarks = []; S.lmDestroyed = 0; S.tourIdx = -1;
+  clearLabels();
+}
+
+// ───────── 랜드마크 (교문 · 백마상 · 주요 건물: 옥상 간판 + 하이라이트 링) ─────────
+function createLandmarks(data) {
+  S.landmarks = tagLandmarks(S.buildings);
+  S.landmarks.forEach((b, i) => {
+    const ring = makeHalo(b); ring.userData.phase = i * 1.7;
+    landmarkGroup.add(ring); S.lmRings.push({ mesh: ring, b });
+    if (b.area > 250 && b.r > 9) { b.sign = makeRoofSign(b); landmarkGroup.add(b.sign.mesh); }
+  });
+  const addObj = (grp, u) => {
+    const o = { grp, x: grp.position.x, z: grp.position.z, r: u.r, h: u.h, name: u.name, icon: u.icon, line: u.line, kind: u.kind, dead: false, t: 0,
+      // 라벨·투어용 가짜 건물 정보
+      lb: { short: u.name, cx: grp.position.x, cz: grp.position.z, h: u.h, h0: u.h, r: u.r, area: 600, campus: true, dead: false,
+        landmark: { icon: u.icon, title: u.title, desc: u.desc, pri: u.pri } } };
+    landmarkGroup.add(grp); S.lmObjs.push(o);
+    return o;
+  };
+  const mainGate = (data.gates || []).find((g) => g.name === '정문');
+  for (const g of data.gates || []) {
+    const main = g.name === '정문';
+    const gate = makeGate(g.name, main ? 18 : 12);
+    gate.position.set(g.x, 0, g.z);
+    gate.rotation.y = gateRotation(g.x, g.z, 0, 0);
+    addObj(gate, { r: main ? 14 : 10, h: 11, name: g.name, icon: '🚪', kind: 'gate', title: `${SCHOOL.ko} ${g.name}`, pri: main ? 200 : 40,
+      line: `${SCHOOL.short} ${g.name}이 무너졌다!`, desc: main ? '여기서부터 충남대 — 대학로 쪽 정문' : `${g.name}으로 드나드는 길` });
+  }
+  for (const m of data.monuments || []) {
+    if (m.kind !== 'horse') continue;
+    const st = makeHorseStatue();
+    st.position.set(m.x, 0, m.z);
+    if (mainGate) st.rotation.y = -Math.atan2(mainGate.z - m.z, mainGate.x - m.x); // 정문 쪽을 바라봄
+    addObj(st, { r: 6, h: 9, name: '백마상', icon: '🐎', kind: 'horse', title: '백마상', pri: 150, line: '백마상이 쓰러졌다… 충남대의 상징이!', desc: '충남대의 상징, 백마' });
+  }
+}
+// 투어 순서: 정문 → 백마상 → 랜드마크 건물(중요도순) → 나머지 교문
+function tourList() {
+  const objs = S.lmObjs.map((o) => o.lb);
+  return [...objs.filter((p) => p.landmark.icon === '🚪' && p.short === '정문'), ...objs.filter((p) => p.landmark.icon === '🐎'),
+    ...S.landmarks, ...objs.filter((p) => p.landmark.icon === '🚪' && p.short !== '정문')];
+}
+function tourNext() {
+  const list = tourList();
+  if (!list.length) return;
+  S.tourIdx = (S.tourIdx + 1) % list.length;
+  const t = list[S.tourIdx];
+  const dist = Math.max(70, t.r * 4.2 + 40);
+  const az = Math.atan2(camera.position.x - controls.target.x, camera.position.z - controls.target.z);
+  const target = new THREE.Vector3(t.cx, Math.max(2, (t.h0 || 10) * 0.4), t.cz);
+  const pos = new THREE.Vector3(t.cx + Math.sin(az) * dist, dist * 0.75 + (t.h0 || 10) * 0.6, t.cz + Math.cos(az) * dist);
+  S.topView = false; $('topview').classList.remove('on');
+  flyTo(target, pos, 900);
+  showLmCard(t, `${S.tourIdx + 1} / ${list.length}`);
+}
+let lmTimer = 0;
+function showLmCard(t, idx) {
+  const el = $('lmcard');
+  $('lmicon').textContent = t.landmark.icon;
+  $('lmtitle').textContent = t.landmark.title + (t.dead ? ' (붕괴됨)' : '');
+  $('lmdesc').textContent = t.landmark.desc + (idx ? ` · ${idx}` : '');
+  el.classList.add('on');
+  clearTimeout(lmTimer);
+  lmTimer = setTimeout(() => el.classList.remove('on'), 3600);
+}
+function hitLandmarks(x, z, R, power = 1) {
+  for (const o of S.lmObjs) {
+    if (o.dead) continue;
+    if (Math.hypot(o.x - x, o.z - z) - o.r * 0.6 < R * 0.9) {
+      o.dead = true; o.t = 0; o.lb.dead = true;
+      const dx = o.x - x, dz = o.z - z, L = Math.hypot(dx, dz) || 1;
+      o.dir = [dx / L, dz / L]; o.power = power;
+      S.score += 300; S.lmDestroyed++;
+      toast(`⭐ ${o.line} +300`);
+      if (o.lb.label) o.lb.label.el.classList.add('dead');
+      dustAt({ cx: o.x, cz: o.z, r: o.r, h: o.h }, 12);
+      for (let i = 0; i < 18; i++) D.spawn(o.x + rand(-o.r, o.r) * 0.5, rand(1, o.h), o.z + rand(-o.r, o.r) * 0.5, o.dir[0] * rand(4, 14) + rand(-3, 3), rand(4, 14), o.dir[1] * rand(4, 14) + rand(-3, 3), rand(0.8, 2.2), new THREE.Color(0xd8d1c2));
+    }
+  }
+}
+function updateLandmarks(dt) {
+  for (const o of S.lmObjs) {
+    if (!o.dead || o.t >= 1) continue;
+    o.t = Math.min(1, o.t + dt * 0.7);
+    const u = easeOut(o.t);
+    o.grp.rotation.x = o.dir[1] * u * 1.35; o.grp.rotation.z = -o.dir[0] * u * 1.35;
+    o.grp.position.y = -u * o.h * 0.55;
+    if (o.t >= 1) o.grp.visible = false;
+  }
+  for (const r of S.lmRings) {
+    r.mesh.visible = !r.b.dead;
+    r.mesh.material.opacity = 0.28 + 0.16 * Math.sin(S.time * 2.2 + r.mesh.userData.phase);
+  }
+}
+function resetLandmarks() {
+  S.lmDestroyed = 0;
+  for (const b of S.landmarks) if (b.sign) { b.sign.mesh.visible = true; b.sign.update(b.h0); }
+  for (const o of S.lmObjs) {
+    o.dead = false; o.t = 0; o.lb.dead = false; o.grp.visible = true;
+    o.grp.rotation.x = o.grp.rotation.z = 0; o.grp.position.y = 0;
+    if (o.lb.label) o.lb.label.el.classList.remove('dead');
+  }
 }
 
 function createWorld(data) {
   clearWorld();
   S.data = data; S.radius = data.radius || 600;
-  data.buildings.forEach((d, i) => {
-    const geo = makeBuildingGeometry(d.pts, d.color, i + 1);
-    const mesh = new THREE.Mesh(geo, [capMat, wallMat]);
+  const STYLE_COLOR = [0xd8d1c2, 0x9a5540, 0x9fa9b2, 0xb9b6ad, 0xc9b596, 0xaeb4b8, 0xe9e6df];
+  data.buildings.forEach((d) => {
+    const geo = makeBuildingGeometry(d);
+    const mesh = new THREE.Mesh(geo, bldMat);
     mesh.scale.y = d.h;
     mesh.castShadow = !isMobile; mesh.receiveShadow = !isMobile;
+    const edges = makeEdgeLines(geo, edgeMat);
+    mesh.add(edges);
     const b = {
-      id: d.id, name: d.name, cx: d.cx, cz: d.cz, r: d.r, area: d.area,
-      h0: d.h, h: d.h, th: d.h, dead: false, mesh, color: new THREE.Color(d.color), top: d.h,
+      id: d.id, name: d.name, short: d.short || d.name, campus: d.campus !== false, cx: d.cx, cz: d.cz, r: d.r, area: d.area, pts: d.pts,
+      h0: d.h, h: d.h, th: d.h, dead: false, mesh, edges, color: new THREE.Color(STYLE_COLOR[d.styleIdx] || 0xd9d2c3), top: d.h, style: d.style,
     };
     mesh.userData.b = b;
     buildingGroup.add(mesh);
@@ -343,28 +462,52 @@ function createWorld(data) {
   });
   S.totalVol = S.buildings.reduce((s, b) => s + b.area * b.h0, 0);
   S.lostVol = 0; S.score = 0; S.destroyed = 0;
-  if (data.roads.length) {
-    const rm = new THREE.Mesh(makeRoadGeometry(data.roads), roadMat);
-    rm.receiveShadow = !isMobile;
-    roadGroup.add(rm);
-  }
-  lawn.scale.setScalar(S.radius + 160);
+  // 바닥 텍스처 (도로·녹지·운동장·물)
+  const ext = S.radius + 260;
+  paintGround(groundCanvas, data, ext);
+  groundTex.needsUpdate = true;
+  lawn.scale.set(ext * 2, 1, ext * 2);
+  // 나무
+  plantTrees(data, isMobile ? 1400 : 3000);
+  S.trees = makeTrees(data.trees, { castShadow: !isMobile });
+  scene.add(S.trees.trunks, S.trees.crowns);
+  createLandmarks(data);
+  buildLabels();
   const e = S.radius + 120;
   const sc = sun.shadow.camera;
   sc.left = -e; sc.right = e; sc.top = e; sc.bottom = -e;
   sc.updateProjectionMatrix();
   controls.maxDistance = S.radius * 3.4;
-  controls.target.set(0, 0, 0);
-  const dist = S.radius * 1.5;
-  camera.position.set(dist * 0.15, dist * 0.8, dist * 0.95);
-  controls.update();
+  homeView(true);
 }
+
+// 시점: 처음 시점 / 위에서 보기
+function homeView(instant = false) {
+  S.topView = false; $('topview').classList.remove('on');
+  const dist = S.radius * 1.5;
+  flyTo(new THREE.Vector3(0, 0, 0), new THREE.Vector3(dist * 0.15, dist * 0.8, dist * 0.95), instant ? 0 : 800);
+}
+function topView() {
+  S.topView = true; $('topview').classList.add('on');
+  const t = controls.target.clone();
+  flyTo(t, new THREE.Vector3(t.x + 0.01, S.radius * 1.9, t.z + 0.02), 800);
+}
+let camAnim = null;
+function flyTo(target, pos, ms) {
+  if (ms <= 0) { controls.target.copy(target); camera.position.copy(pos); controls.update(); camAnim = null; return; }
+  camAnim = { t0: performance.now(), ms, fT: controls.target.clone(), tT: target, fP: camera.position.clone(), tP: pos };
+}
+controls.addEventListener('start', () => { camAnim = null; });
 
 function resetWorld() {
   for (const b of S.buildings) {
     b.h = b.th = b.h0; b.dead = false; b.rubble = false;
-    b.mesh.scale.y = b.h0; b.mesh.material = [capMat, wallMat]; b.mesh.position.set(0, 0, 0);
+    b.mesh.scale.y = b.h0; b.mesh.material = bldMat; b.mesh.position.set(0, 0, 0);
+    b.edges.visible = true;
+    if (b.label) b.label.el.classList.remove('dead');
   }
+  if (S.trees) S.trees.reset();
+  resetLandmarks();
   S.lostVol = 0; S.score = 0; S.destroyed = 0; S.projectiles.forEach((p) => scene.remove(p.mesh)); S.projectiles = [];
   S.rings.forEach((r) => scene.remove(r.mesh)); S.rings = [];
   S.lasers.forEach((l) => scene.remove(l.mesh)); S.lasers = [];
@@ -420,13 +563,16 @@ function applyDrop(b, drop, ex, ez, power = 1) {
   if (b.th <= 0.61) {
     b.dead = true; S.destroyed++;
     S.score += 40 + Math.sqrt(b.area) * 2;
-    if (b.name) toast(`💥 ${b.name} 붕괴!`);
+    if (b.landmark) { S.score += 300; S.lmDestroyed++; toast(`⭐ 랜드마크 ${b.landmark.title} 붕괴! +300`); if (b.sign) b.sign.mesh.visible = false; }
+    else if (b.short) toast(`💥 ${b.short} 붕괴!`);
     else if (b.h0 > 30) toast('💥 고층 건물 붕괴!');
+    if (b.label) b.label.el.classList.add('dead');
   }
   return lost;
 }
 
 function damageAt(x, z, R, Pw, power = 1) {
+  if (Pw >= 12) hitLandmarks(x, z, R, power);
   for (const b of S.buildings) {
     if (b.dead) continue;
     const d = Math.hypot(b.cx - x, b.cz - z) - b.r * 0.55;
@@ -443,11 +589,13 @@ function animateBuildings(dt) {
       const before = b.h;
       b.h = Math.max(b.th, b.h + (b.th - b.h) * Math.min(1, dt * 5.5) - 0.2 * dt);
       b.mesh.scale.y = Math.max(0.3, b.h);
+      if (b.sign) b.sign.update(b.h);
       if (Math.random() < 0.5 && before - b.h > 0.02) dustAt(b, 1);
     }
     if (b.dead && !b.rubble && b.h <= b.th + 0.5) {
       b.rubble = true;
-      b.mesh.material = [rubbleCap, rubbleWall];
+      b.mesh.material = rubbleMat;
+      b.edges.visible = false;
       b.mesh.scale.y = 0.7;
       dustAt(b, 8);
     }
@@ -490,6 +638,7 @@ function ring(x, z, maxR, dur = 1.0, color = 0xffd9a0) {
 
 function explode(x, y, z, R, Pw, opts = {}) {
   damageAt(x, z, R, Pw, opts.power || 1);
+  if (S.trees) S.trees.knock(x, z, R * 0.8);
   fireball(x, y, z, R, opts.k || 1);
   ring(x, z, R * 1.5, 0.6 + R / 80);
   S.shake = Math.max(S.shake, clamp(R / 45, 0.25, 1.4));
@@ -551,6 +700,7 @@ function fireBat(x, y, z) {
         hit = true;
         whoosh();
         damageAt(x, z, 20, 20, 1.6);
+        if (S.trees) S.trees.knock(x, z, 9);
         for (let i = 0; i < 26; i++) {
           const a = rand(-1.2, 1.2) + az + Math.PI / 2;
           const sp = rand(8, 34);
@@ -691,6 +841,8 @@ function updateNukes(dt) {
   for (let i = S.nukes.length - 1; i >= 0; i--) {
     const n = S.nukes[i];
     n.prev = n.r; n.r += n.speed * dt;
+    if (S.trees) S.trees.knock(n.x, n.z, n.r * 0.9);
+    hitLandmarks(n.x, n.z, n.r * 0.9, 2);
     for (const b of S.buildings) {
       if (b.dead) continue;
       const d = Math.hypot(b.cx - n.x, b.cz - n.z) - b.r * 0.5;
@@ -715,7 +867,7 @@ function useWeapon(id, hit) {
   if ((S.cd[id] || 0) > now) return;
   S.cd[id] = now + w.cd;
   const { x, y, z, b } = hit;
-  if (b && b.name) showTarget(b.name);
+  if (b && b.short) showTarget(b.short);
   if (id === 'bomb') fireBomb(x, y, z);
   else if (id === 'bat') fireBat(x, y, z);
   else if (id === 'laser') fireLaser(x, y, z);
@@ -725,12 +877,104 @@ function useWeapon(id, hit) {
 }
 
 let targetTimer = 0;
-function showTarget(name) {
+function showTarget(name, hover = false) {
   const el = $('target');
-  el.textContent = '🎯 ' + name;
+  el.textContent = (hover ? '' : '🎯 ') + name;
   el.style.opacity = 1;
   clearTimeout(targetTimer);
-  targetTimer = setTimeout(() => { el.style.opacity = 0; }, 1800);
+  targetTimer = setTimeout(() => { el.style.opacity = 0; }, hover ? 1200 : 1800);
+}
+
+
+// ───────── 건물 이름 라벨 (HTML, 겹침 방지 · 가까운 것부터) ─────────
+const labelLayer = $('labels');
+let labels = [];
+function clearLabels() {
+  for (const L of labels) L.el.remove();
+  labels = [];
+}
+function buildLabels() {
+  clearLabels();
+  const targets = [...S.buildings, ...S.lmObjs.map((o) => o.lb)];
+  for (const b of targets) {
+    if (!b.short) continue;
+    const el = document.createElement('div');
+    el.className = 'label' + (b.campus ? '' : ' minor') + (b.landmark ? ' landmark' : '');
+    el.textContent = b.landmark ? `${b.landmark.icon} ${b.landmark.title || b.short}` : b.short;
+    labelLayer.appendChild(el);
+    const L = { b, el, w: 0, h: 0, on: false, tf: '', pri: (Math.sqrt(b.area) * (b.campus ? 1 : 0.35) + b.h0 * 0.5) * (b.landmark ? 6 : 1) };
+    b.label = L;
+    labels.push(L);
+  }
+  requestAnimationFrame(() => labels.forEach((L) => { L.w = L.el.offsetWidth || 80; L.h = L.el.offsetHeight || 20; }));
+}
+const lv3 = new THREE.Vector3();
+let labelTick = 0, labelKey = '';
+function updateLabels(force = false) {
+  if (!labels.length) return;
+  labelTick++;
+  const m = camera.matrixWorld.elements;
+  const key = `${m[12].toFixed(0)},${m[13].toFixed(0)},${m[14].toFixed(0)},${m[8].toFixed(2)},${m[9].toFixed(2)},${m[10].toFixed(2)},${S.labelsOn}`;
+  if (!force && key === labelKey && labelTick % 15) return;
+  labelKey = key;
+  const w = window.innerWidth, h = window.innerHeight;
+  const camD = camera.position.distanceTo(controls.target);
+  const maxN = isMobile ? (camD < S.radius * 0.9 ? 22 : 14) : (camD < S.radius * 0.9 ? 60 : 36);
+  const items = [];
+  if (S.labelsOn) {
+    for (const L of labels) {
+      const b = L.b;
+      lv3.set(b.cx, Math.max(b.h, 1) + 2, b.cz);
+      const d = camera.position.distanceTo(lv3);
+      lv3.project(camera);
+      if (lv3.z >= 1) continue;
+      const x = ((lv3.x + 1) / 2) * w, y = ((1 - lv3.y) / 2) * h;
+      if (x < -60 || x > w + 60 || y < -10 || y > h + 20) continue;
+      // 가까울수록 · 클수록 먼저. 멀리 있는 작은 건물은 생략
+      let score = L.pri * 60 / (d + 40) * (b.dead ? 0.55 : 1);
+      if (b.landmark) score += 1e6 + (b.landmark.pri || 0); // 랜드마크는 항상 먼저
+      items.push({ L, x, y, d, score });
+    }
+  }
+  items.sort((a, b) => b.score - a.score);
+  // 라벨이 HUD 와 겹치지 않도록
+  const placed = [];
+  for (const id of ['stat', 'btns', 'bottom', 'target']) {
+    const el = $(id); if (!el) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width && r.height && getComputedStyle(el).opacity !== '0') placed.push([r.left - 4, r.top - 4, r.width + 8, r.height + 8]);
+  }
+  const onSet = new Set();
+  let shown = 0;
+  for (const it of items) {
+    const { L } = it;
+    if (shown >= maxN && !L.b.landmark) break;
+    const rx = it.x - L.w / 2 - 3, ry = it.y - L.h - 10, rw = L.w + 6, rh = L.h + 4;
+    if (placed.some((p) => rx < p[0] + p[2] && p[0] < rx + rw && ry < p[1] + p[3] && p[1] < ry + rh)) continue;
+    placed.push([rx, ry, rw, rh]);
+    onSet.add(L); if (!L.b.landmark) shown++;
+    const tf = `translate(${Math.round(it.x - L.w / 2)}px, ${Math.round(it.y - L.h - 7)}px)`;
+    if (tf !== L.tf) { L.tf = tf; L.el.style.transform = tf; }
+    // 거리감: 멀면 작게
+    const sc = clamp(1.15 - it.d / (S.radius * 3.2), 0.72, 1);
+    const scs = sc.toFixed(2);
+    if (scs !== L.sc) { L.sc = scs; L.el.style.setProperty('--s', scs); }
+  }
+  for (const L of labels) {
+    const on = onSet.has(L);
+    if (on !== L.on) { L.on = on; L.el.classList.toggle('on', on); }
+  }
+}
+
+// PC: 마우스를 올리면 건물 이름 표시
+let hoverAcc = 0, hoverB = null;
+function hoverAt(clientX, clientY) {
+  const hit = pick(clientX, clientY);
+  const b = hit && hit.b;
+  if (b !== hoverB) {
+    hoverB = b;
+    if (b && b.short) showTarget((b.dead ? '💀 ' : '') + b.short, true);
+  }
 }
 
 // ───────── 입력 ─────────
@@ -773,6 +1017,27 @@ canvas.addEventListener('pointerup', (e) => {
   if (hit) { S.taps++; useWeapon(S.weapon, hit); }
 });
 canvas.addEventListener('pointercancel', () => { pointers = 0; gesture = null; });
+if (!isMobile) {
+  canvas.addEventListener('pointermove', (e) => {
+    if (!S.started || pointers > 0) return;
+    const now = performance.now();
+    if (now - hoverAcc < 70) return;
+    hoverAcc = now;
+    hoverAt(e.clientX, e.clientY);
+  });
+}
+// 키보드: 1~6 무기, N 밤, L 이름, T 위에서, H 처음 시점
+window.addEventListener('keydown', (e) => {
+  if (!S.started || e.metaKey || e.ctrlKey || e.altKey) return;
+  const ids = Object.keys(WEAPONS);
+  const k = e.key.toLowerCase();
+  if (/^[1-6]$/.test(k)) { const btn = document.querySelector(`.wbtn[data-id="${ids[+k - 1]}"]`); if (btn) btn.click(); }
+  else if (k === 'n') $('night').click();
+  else if (k === 'l') $('labels-btn').click();
+  else if (k === 't') $('topview').click();
+  else if (k === 'h') $('home').click();
+  else if (k === 'g') tourNext();
+});
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ───────── HUD ─────────
@@ -822,8 +1087,8 @@ function updateCooldownUI() {
 }
 
 // 밤 모드
-const DAY = { top: new THREE.Color(0x5ea6ee), bot: new THREE.Color(0xd4e9fb), ground: new THREE.Color(0x86a566), lawn: new THREE.Color(0x93b370), hemiS: new THREE.Color(0xcfe6ff), sunC: new THREE.Color(0xfff1d8) };
-const NIGHT = { top: new THREE.Color(0x03050d), bot: new THREE.Color(0x172143), ground: new THREE.Color(0x2b3a2f), lawn: new THREE.Color(0x33463a), hemiS: new THREE.Color(0x6d86d6), sunC: new THREE.Color(0x8fa6ff) };
+const DAY = { top: new THREE.Color(0x5ea6ee), bot: new THREE.Color(0xd4e9fb), ground: new THREE.Color(0xa3a98f), lawn: new THREE.Color(0x93b370), hemiS: new THREE.Color(0xcfe6ff), sunC: new THREE.Color(0xfff1d8) };
+const NIGHT = { top: new THREE.Color(0x03050d), bot: new THREE.Color(0x172143), ground: new THREE.Color(0x262d36), lawn: new THREE.Color(0x33463a), hemiS: new THREE.Color(0x6d86d6), sunC: new THREE.Color(0x8fa6ff) };
 let lastNight = -1;
 function applyNight(n) {
   if (Math.abs(n - lastNight) < 0.002) return;
@@ -833,7 +1098,8 @@ function applyNight(n) {
   document.body.style.background = `linear-gradient(180deg, #${top.getHexString()} 0%, #${bot.getHexString()} 62%)`;
   fog.color.copy(bot);
   groundMat.color.lerpColors(DAY.ground, NIGHT.ground, n);
-  lawnMat.color.lerpColors(DAY.lawn, NIGHT.lawn, n);
+  lawnMat.color.lerpColors(new THREE.Color(0xffffff), new THREE.Color(0x3a4660), n);
+  edgeMat.opacity = lerp(0.32, 0.12, n);
   hemi.color.lerpColors(DAY.hemiS, NIGHT.hemiS, n);
   hemi.intensity = lerp(1.0, 0.45, n);
   sun.color.lerpColors(DAY.sunC, NIGHT.sunC, n);
@@ -849,6 +1115,7 @@ function showResult() {
   $('rpct').textContent = p.toFixed(1) + '%';
   $('rscore').textContent = Math.floor(S.score).toLocaleString('ko-KR');
   $('rcnt').textContent = `${S.destroyed} / ${S.buildings.length}동`;
+  $('rlm').textContent = `${S.lmDestroyed} / ${S.landmarks.length + S.lmObjs.length}곳`;
   $('result').style.display = 'flex';
 }
 
@@ -869,9 +1136,9 @@ function drawCard() {
   g.fillText(r[1], 540, 560);
   g.font = '700 58px system-ui, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif';
   g.fillStyle = '#ffd7a8'; g.fillText(r[2], 540, 660);
-  const rows = [['파괴율', p.toFixed(1) + '%'], ['점수', Math.floor(S.score).toLocaleString('ko-KR')], ['무너뜨린 건물', `${S.destroyed} / ${S.buildings.length}동`]];
+  const rows = [['파괴율', p.toFixed(1) + '%'], ['점수', Math.floor(S.score).toLocaleString('ko-KR')], ['무너뜨린 건물', `${S.destroyed} / ${S.buildings.length}동`], ['⭐ 랜드마크', `${S.lmDestroyed} / ${S.landmarks.length + S.lmObjs.length}곳`]];
   rows.forEach((row, i) => {
-    const y = 790 + i * 130;
+    const y = 760 + i * 118;
     g.fillStyle = 'rgba(255,255,255,.08)'; g.fillRect(150, y - 78, 780, 106);
     g.textAlign = 'left'; g.fillStyle = '#aab6d6'; g.font = '600 40px system-ui, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif'; g.fillText(row[0], 190, y - 10);
     g.textAlign = 'right'; g.fillStyle = '#fff'; g.font = '800 54px system-ui, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif'; g.fillText(row[1], 890, y - 6);
@@ -935,6 +1202,7 @@ function loop(now) {
   for (let i = S.clouds.length - 1; i >= 0; i--) if (S.clouds[i].update(dt)) { S.clouds[i].dispose(); S.clouds.splice(i, 1); }
   updateQuake(dt);
   updateNukes(dt);
+  updateLandmarks(dt);
   animateBuildings(dt);
   P.update(dt);
   D.update(dt);
@@ -946,7 +1214,14 @@ function loop(now) {
   hudAcc += dt;
   if (hudAcc > 0.1) { hudAcc = 0; hud(); updateCooldownUI(); }
 
+  if (camAnim) {
+    const u = easeOut((now - camAnim.t0) / camAnim.ms);
+    controls.target.lerpVectors(camAnim.fT, camAnim.tT, u);
+    camera.position.lerpVectors(camAnim.fP, camAnim.tP, u);
+    if (u >= 1) camAnim = null;
+  }
   controls.update();
+  updateLabels();
   // 카메라 흔들림
   if (S.shake > 0.001) {
     const a = S.shake * 3.2;
@@ -967,12 +1242,21 @@ function startPlay() {
   $('intro').style.display = 'none';
   $('hud').style.display = 'block';
   unlockAudio();
+  requestAnimationFrame(() => { labels.forEach((L) => { L.w = L.el.offsetWidth || L.w; L.h = L.el.offsetHeight || L.h; }); updateLabels(true); });
 }
 
 function wireUI() {
   buildWeaponBar();
   $('start').addEventListener('click', startPlay);
   $('night').addEventListener('click', (e) => { e.currentTarget.classList.toggle('on'); });
+  $('labels-btn').addEventListener('click', (e) => {
+    S.labelsOn = !S.labelsOn;
+    e.currentTarget.classList.toggle('on', S.labelsOn);
+    updateLabels(true);
+  });
+  $('topview').addEventListener('click', () => { if (S.topView) homeView(); else topView(); });
+  $('home').addEventListener('click', () => homeView());
+  $('tour').addEventListener('click', tourNext);
   $('mute').addEventListener('click', (e) => {
     muted = !muted;
     e.currentTarget.textContent = muted ? '🔇' : '🔊';
@@ -1006,12 +1290,20 @@ async function boot() {
       : '지도 서버에 연결하지 못해 내장 근사 캠퍼스로 시작했어요. (인터넷 연결 후 새로고침하면 실제 지도로 불러와요)';
   }
   createWorld(data);
-  $('src').textContent = (data.source === 'fallback' ? '근사 캠퍼스(실제 지도 아님)' : '건물·도로 © OpenStreetMap contributors') + ' · ' + data.stats;
+  $('src').textContent = (data.source === 'fallback' ? '근사 캠퍼스(실제 지도 아님)' : '건물·도로·녹지 © OpenStreetMap contributors') + ' · ' + data.stats;
+  updateLabels(true);
   if (note) $('note').textContent = note;
+  {
+    const names = [...S.lmObjs.map((o) => o.icon + ' ' + o.name), ...S.landmarks.slice(0, 6).map((b) => b.landmark.icon + ' ' + b.landmark.title)];
+    const more = S.landmarks.length - 6;
+    if (names.length) $('lms').textContent = '랜드마크 ' + (S.landmarks.length + S.lmObjs.length) + '곳: ' + names.join(' · ') + (more > 0 ? ` 외 ${more}곳` : '') + ' — 📍 버튼으로 둘러보기';
+    const gg = (data.gates || []).find((g) => g.name === '정문');
+    if (gg && gg.src === 'guess') $('note').textContent += ($('note').textContent ? ' ' : '') + '지도에 정문 위치가 없어 캠퍼스 동쪽(대학로 방향) 경계에 정문을 두었어요.';
+  }
   $('loading').style.display = 'none';
   $('intro').style.display = 'flex';
   hud();
 }
 
 window.__SMASH__ = { S, camera, controls }; // 디버그/테스트용
-boot().catch((e) => showErr(e.message || String(e)));
+boot().catch((e) => { console.error(e); showErr(e.message || String(e)); });

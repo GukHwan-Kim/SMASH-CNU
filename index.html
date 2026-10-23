@@ -21,6 +21,33 @@
     color:#fff; user-select:none; -webkit-user-select:none;
   }
   #c { position:fixed; inset:0; width:100%; height:100%; display:block; touch-action:none; }
+
+  /* 건물 이름 라벨 */
+  #labels { position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:6; }
+  .label { --s:1; position:absolute; left:0; top:0; padding:2px 7px; border-radius:5px; background:rgba(12,18,30,.74); color:#f4f6f8;
+    font:600 12px/1.35 system-ui,-apple-system,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif; white-space:nowrap;
+    opacity:0; visibility:hidden; transition:opacity .15s, visibility .15s; transform-origin:50% 100%; letter-spacing:-.01em;
+    box-shadow:0 1px 4px rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.12); }
+  .label::after { content:""; position:absolute; left:50%; top:100%; width:1px; height:7px; background:rgba(255,255,255,.55); }
+  .label.on { opacity:calc(.55 + .45 * var(--s)); visibility:visible; }
+  .label.on { font-size:calc(12px * var(--s)); }
+  .label.minor { background:rgba(60,66,80,.6); color:#dfe3ea; font-weight:500; }
+  .label.landmark { background:linear-gradient(160deg,rgba(80,56,14,.9),rgba(40,28,8,.9)); color:#ffe7b0; border-color:rgba(255,200,90,.6); font-weight:800; font-size:13.5px; box-shadow:0 0 0 2px rgba(255,200,90,.18), 0 2px 8px rgba(0,0,0,.35); }
+  .label.landmark.on { font-size:calc(13.5px * var(--s)); opacity:1; }
+  .label.landmark::after { background:rgba(255,200,90,.8); height:10px; }
+  .label.landmark.dead { color:#ffb9a6; border-color:rgba(255,120,90,.6); }
+  /* 랜드마크 카드 (투어) */
+  #lmcard { position:fixed; left:50%; bottom:calc(max(10px, env(safe-area-inset-bottom)) + 150px); transform:translate(-50%, 12px); display:flex; gap:12px; align-items:center;
+    padding:10px 16px; border-radius:16px; background:linear-gradient(135deg, rgba(60,42,12,.92), rgba(24,18,8,.92)); border:1px solid rgba(255,210,110,.6);
+    opacity:0; pointer-events:none; transition:opacity .25s, transform .25s; z-index:12; max-width:min(92vw, 420px); }
+  #lmcard.on { opacity:1; transform:translate(-50%, 0); }
+  #lmicon { font-size:30px; line-height:1; }
+  #lmtitle { font-weight:900; font-size:16px; color:#ffe9b8; }
+  #lmdesc { font-size:12px; opacity:.85; margin-top:2px; line-height:1.4; }
+  @media (max-width:600px) { #lmcard { bottom:calc(max(10px, env(safe-area-inset-bottom)) + 136px); padding:8px 12px; } #lmtitle { font-size:14px; } #lmdesc { font-size:11px; } }
+  .label.dead { background:rgba(70,20,16,.72); color:#ffc9b8; text-decoration:line-through; }
+  .label.dead::before { content:"💥 "; }
+  @media (max-width:600px) { .label { font-size:11px; padding:1px 6px; } .label.on { font-size:calc(11px * var(--s)); } }
   .glass { background:var(--glass); backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); border:1px solid var(--line); border-radius:16px; }
   button { font:inherit; color:inherit; cursor:pointer; }
 
@@ -41,6 +68,8 @@
   #intro p { margin:6px 0; font-size:14px; line-height:1.55; opacity:.92; }
   #msg { display:none; margin:10px 0 4px; padding:10px 12px; border-radius:12px; background:rgba(255,255,255,.08); font-size:14px; }
   #note { font-size:12px; color:#ffd7a8; margin-top:8px; line-height:1.45; }
+  #lms { font-size:12px; color:#ffe2a6; margin-top:8px; line-height:1.5; padding:6px 10px; border-radius:10px; background:rgba(255,200,90,.1); border:1px solid rgba(255,200,90,.25); }
+  #lms:empty { display:none; }
   #start { margin-top:12px; width:100%; border:0; border-radius:14px; padding:15px; font-size:18px; font-weight:800; background:linear-gradient(135deg,#ff8a2a,#ff4d2a); box-shadow:0 8px 24px rgba(255,90,30,.4); }
   #start:active { transform:translateY(1px); }
   #src { margin-top:10px; font-size:11px; opacity:.6; }
@@ -74,6 +103,22 @@
   .cdfill { position:absolute; left:0; right:0; bottom:0; height:0; background:rgba(0,0,0,.55); pointer-events:none; }
   #credit { position:fixed; left:10px; bottom:6px; font-size:10px; opacity:.55; z-index:5; pointer-events:none; display:none; }
   @media (min-width:900px) { #credit { display:block; } .wbtn { width:84px; height:80px; } }
+  @media (max-width:600px) {
+    .ib { width:40px; height:40px; border-radius:12px; font-size:18px; }
+    #btns { gap:6px; }
+    #stat { padding:8px 12px; }
+    #pct { font-size:22px; }
+    #stat .t { font-size:14px; }
+    .wbtn { width:56px; height:62px; border-radius:14px; }
+    #weapons { gap:6px; padding:8px; }
+    .wbtn .ic { font-size:23px; }
+    #hint { font-size:12px; }
+    #target { top:calc(max(10px, env(safe-area-inset-top)) + 84px); font-size:13px; }
+    #toast { top:calc(max(10px, env(safe-area-inset-top)) + 118px); }
+  }
+  @media (max-height:520px) and (orientation:landscape) {
+    #weapons { padding:6px; } .wbtn { width:58px; height:56px; } .wbtn .ic { font-size:20px; } #hint { display:none; }
+  }
 
   #flash { position:fixed; inset:0; background:#fff; opacity:0; pointer-events:none; z-index:30; }
 
@@ -93,6 +138,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="labels" aria-hidden="true"></div>
 
 <div id="loading" class="overlay">
   <div class="spin"></div>
@@ -107,7 +153,8 @@
     <h1>SMASH <b>충남대</b></h1>
     <p>우리 캠퍼스를 3D로 부숴 보세요.<br>폭탄 · 야구 배트 · 레이저 · 운석 · 지진 · 핵폭탄.<br>시험기간 스트레스 해소용입니다.</p>
     <div id="msg"></div>
-    <p style="font-size:12px;opacity:.7">탭: 공격 · 드래그: 회전 · 두 손가락: 확대/이동<br>(PC: 휠 확대 · 오른쪽 버튼 드래그 이동)</p>
+    <p style="font-size:12px;opacity:.7">탭: 공격 · 드래그: 회전 · 두 손가락: 확대/이동<br>(PC: 휠 확대 · 오른쪽 버튼 드래그 이동 · 숫자키 1~6 무기 · L 이름 · T 위에서 · N 밤 · G 랜드마크 투어)</p>
+    <div id="lms"></div>
     <div id="note"></div>
     <button id="start">부수러 가기 →</button>
     <div id="src"></div>
@@ -123,13 +170,18 @@
       <div class="sub"><span>점수 <b id="score">0</b></span><span id="cnt">0 / 0동</span></div>
     </div>
     <div id="btns">
-      <button id="night" class="ib glass" aria-label="밤 모드">🌙</button>
+      <button id="labels-btn" class="ib glass on" aria-label="건물 이름 표시 (L)" title="건물 이름 표시 (L)">🏷️</button>
+      <button id="topview" class="ib glass" aria-label="위에서 보기 (T)" title="위에서 보기 (T)">🗺️</button>
+      <button id="home" class="ib glass" aria-label="처음 시점 (H)" title="처음 시점 (H)">🏠</button>
+      <button id="tour" class="ib glass" aria-label="랜드마크 둘러보기 (G)" title="랜드마크 둘러보기 (G)">📍</button>
+      <button id="night" class="ib glass" aria-label="밤 모드 (N)" title="밤 모드 (N)">🌙</button>
       <button id="mute" class="ib glass" aria-label="소리">🔊</button>
       <button id="finish" class="ib glass" aria-label="결과 보기">🏁</button>
     </div>
   </div>
   <div id="target"></div>
   <div id="toast"></div>
+  <div id="lmcard"><div id="lmicon"></div><div><div id="lmtitle"></div><div id="lmdesc"></div></div></div>
   <div id="bottom">
     <div id="hint"></div>
     <div id="weapons" class="glass"></div>
@@ -144,6 +196,7 @@
     <div class="rrow"><span>파괴율</span><b id="rpct"></b></div>
     <div class="rrow"><span>점수</span><b id="rscore"></b></div>
     <div class="rrow"><span>무너뜨린 건물</span><b id="rcnt"></b></div>
+    <div class="rrow"><span>⭐ 랜드마크</span><b id="rlm"></b></div>
     <div class="rbtns">
       <button id="rsave">결과 카드 저장 / 공유</button>
       <button id="rcont">계속 부수기</button>
